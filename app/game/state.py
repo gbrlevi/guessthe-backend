@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from app.config import settings
 
-if TYPE_CHECKING:  # evita import circular
+if TYPE_CHECKING: 
     from fastapi import WebSocket
 
     from app.models.schemas import Question

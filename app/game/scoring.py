@@ -7,7 +7,7 @@ MAX_POINTS = 1000
 
 
 def compute_score(elapsed: float, duration: float) -> int:
-    """Kahoot-style: cai linearmente de 1000 até ~500 conforme o tempo passa."""
+    """cai linearmente de 1000 até ~500 conforme o tempo passa."""
     if duration <= 0:
         return MAX_POINTS
     ratio = max(0.0, 1.0 - (elapsed / duration))
@@ -15,7 +15,7 @@ def compute_score(elapsed: float, duration: float) -> int:
 
 
 def normalize(text: str) -> str:
-    """Minúsculas, sem acentos, sem pontuação. Ex.: "Pokémon: Pikachu!" → "pokemon pikachu" """
+    """minúsculas, sem acentos, sem pontuação. Ex.: "Pokémon: Pikachu!" → "pokemon pikachu" """
     if not text:
         return ""
     text = unicodedata.normalize("NFKD", text)
