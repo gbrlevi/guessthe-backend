@@ -1,0 +1,15 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Ambiente / segredos
+.env
+
+*.md
+.cl*
+
+# IDE
+.vscode/
+.idea/
