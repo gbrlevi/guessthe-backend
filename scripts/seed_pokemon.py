@@ -1,4 +1,3 @@
-"""Pokémon via PokéAPI → 'pokemon' (imagem) + 'pokemon_cries' (áudio)."""
 from __future__ import annotations
 
 from scripts.seed_common import build_question, http_client, replace_category
