@@ -52,9 +52,11 @@ class CategoryInfo(BaseModel):
 # ----- Tipos das mensagens WebSocket recebidas do cliente -----
 
 class ClientMessage(BaseModel):
-    type: Literal["join", "start_game", "submit_answer"]
-    # join: name ; start_game: categories + total_rounds ; submit_answer: guess
+    type: Literal["join", "start_game", "submit_answer", "pause_round", "resume_round"]
     name: str | None = None
     guess: str | None = None
     categories: list[str] | None = None
     total_rounds: int | None = None
+    round_duration: float | None = None
+    allow_multiple_attempts: bool | None = None
+    end_on_all_correct: bool | None = None

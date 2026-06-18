@@ -52,9 +52,24 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                     continue
                 if room.state not in (GameState.LOBBY, GameState.FINISHED):
                     continue
-                ok = engine.start_game(room, msg.categories or [], msg.total_rounds)
+                ok = engine.start_game(
+                    room,
+                    msg.categories or [],
+                    msg.total_rounds,
+                    msg.round_duration,
+                    msg.allow_multiple_attempts,
+                    msg.end_on_all_correct,
+                )
                 if not ok:
                     await manager.send_personal(player, {"type": "error", "message": "Partida já em andamento."})
+
+            elif msg.type == "pause_round":
+                if player.is_host:
+                    await engine.handle_pause(room)
+
+            elif msg.type == "resume_round":
+                if player.is_host:
+                    await engine.handle_resume(room)
 
             elif msg.type == "join":
                 # re-anuncia lobby (útil em reconexão)

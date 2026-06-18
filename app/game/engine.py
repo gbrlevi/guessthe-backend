@@ -60,8 +60,18 @@ def msg_lobby_update(room: Room) -> dict:
             "categories": room.categories,
             "total_rounds": room.total_rounds,
             "round_duration": room.round_duration,
+            "allow_multiple_attempts": room.allow_multiple_attempts,
+            "end_on_all_correct": room.end_on_all_correct,
         },
     }
+
+
+def msg_round_paused(room: Room) -> dict:
+    return {"type": "round_paused", "time_left": max(0, int(room.round_duration) - room.current_round)}
+
+
+def msg_round_resumed() -> dict:
+    return {"type": "round_resumed"}
 
 
 def msg_question_start(room: Room) -> dict:
@@ -129,13 +139,23 @@ async def run_round(room: Room) -> None:
         p.answered = False
         p.last_correct = False
 
+    room.paused = False
+    room.round_skip = False
     room.state = GameState.QUESTION
     room.round_started_at = time.monotonic()
     await manager.broadcast(room, msg_question_start(room))
 
     duration = int(room.round_duration)
     for sec in range(duration):
+        # pausa: congela o tick até o host retomar
+        while room.paused:
+            await asyncio.sleep(0.2)
+
         await asyncio.sleep(1)
+
+        if room.round_skip:
+            break
+
         level = cdn.reveal_level_for(sec, room.round_duration)
         await manager.broadcast(room, msg_reveal_update(room, sec, level))
 
@@ -186,24 +206,63 @@ async def run_game(room: Room) -> None:
             room.current_round = 0
 
 
-def start_game(room: Room, categories: list[str], total_rounds: int | None) -> bool:
+def start_game(
+    room: Room,
+    categories: list[str],
+    total_rounds: int | None,
+    round_duration: float | None = None,
+    allow_multiple_attempts: bool | None = None,
+    end_on_all_correct: bool | None = None,
+) -> bool:
     """Dispara a partida. Retorna False se já rolando."""
     if room.task and not room.task.done():
         return False
     room.categories = categories or []
     room.total_rounds = total_rounds or settings.default_total_rounds
+    if round_duration is not None:
+        room.round_duration = max(5.0, min(120.0, round_duration))
+    if allow_multiple_attempts is not None:
+        room.allow_multiple_attempts = allow_multiple_attempts
+    if end_on_all_correct is not None:
+        room.end_on_all_correct = end_on_all_correct
     room.task = asyncio.create_task(run_game(room))
     return True
 
 
-async def handle_answer(room: Room, player: Player, guess: str) -> None:
-    """Valida o palpite — devolve só um booleano ao jogador."""
-    if player.answered or room.state != GameState.QUESTION or room.current_question is None:
+async def handle_pause(room: Room) -> None:
+    if room.state != GameState.QUESTION or room.paused:
         return
-    player.answered = True
+    room.paused = True
+    await manager.broadcast(room, {"type": "round_paused"})
+
+
+async def handle_resume(room: Room) -> None:
+    if not room.paused:
+        return
+    room.paused = False
+    await manager.broadcast(room, {"type": "round_resumed"})
+
+
+async def handle_answer(room: Room, player: Player, guess: str) -> None:
+    """Valida o palpite. Com múltiplas tentativas, só trava no acerto."""
+    if room.state != GameState.QUESTION or room.current_question is None:
+        return
+    if player.answered:  # já travado (acertou ou sem retry)
+        return
+
     elapsed = time.monotonic() - (room.round_started_at or time.monotonic())
     correct = normalize(guess) in set(room.current_question.accepted_answers)
-    player.last_correct = correct
+
     if correct:
+        player.last_correct = True
+        player.answered = True
         player.score += compute_score(elapsed, room.round_duration)
-    await manager.send_personal(player, {"type": "answer_result", "correct": correct})
+    elif not room.allow_multiple_attempts:
+        player.answered = True  # trava no erro quando sem retry
+
+    locked = player.answered
+    await manager.send_personal(player, {"type": "answer_result", "correct": correct, "locked": locked})
+
+    # encerra o round cedo se todos acertaram
+    if room.end_on_all_correct and all(p.last_correct for p in room.players.values()):
+        room.round_skip = True

@@ -51,6 +51,11 @@ class Room:
     current_question: "Question | None" = None
     round_started_at: float | None = None
 
+    allow_multiple_attempts: bool = True
+    end_on_all_correct: bool = True
+    paused: bool = False
+    round_skip: bool = False  # sinaliza fim antecipado do round
+
     task: "asyncio.Task | None" = None  # cancelável quando a sala esvazia
 
 
