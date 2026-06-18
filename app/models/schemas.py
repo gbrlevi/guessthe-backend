@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 class MediaType(str, Enum):
     IMAGE = "image"
     AUDIO = "audio"
+    VIDEO = "video"
     TEXT = "text"
 
 

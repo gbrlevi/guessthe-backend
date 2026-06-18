@@ -38,6 +38,12 @@ def full_audio_url(original_url: str) -> str:
     return f"{_base()}/video/fetch/{_enc(original_url)}"
 
 
+def clip_video_audio_url(original_url: str, seconds: int) -> str:
+    """Extrai áudio do .webm e entrega só os primeiros N segundos (f_mp3 + eo_N)."""
+    seconds = max(1, seconds)
+    return f"{_base()}/video/fetch/eo_{seconds},f_mp3/{_enc(original_url)}"
+
+
 def reveal_level_for(elapsed_sec: int, duration: float) -> int:
     """Segundo decorrido → nível 0..MAX_LEVEL (divide o round em faixas iguais)."""
     if duration <= 0:

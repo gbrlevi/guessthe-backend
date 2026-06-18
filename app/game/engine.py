@@ -16,6 +16,7 @@ from app.models.schemas import MediaType, Question
 logger = logging.getLogger("ldkquiz.engine")
 
 REVEAL_PAUSE = 4.0
+VIDEO_REVEAL_PAUSE = 6.0
 STARTING_PAUSE = 2.0
 
 
@@ -25,6 +26,8 @@ def _media_payload(q: Question, level: int) -> dict:
         return {"kind": "image", "url": cdn.pixel_image_url(q.media_url, level)}
     if q.media_type == MediaType.AUDIO and q.media_url:
         return {"kind": "audio", "url": cdn.clip_audio_url(q.media_url, level + 1)}
+    if q.media_type == MediaType.VIDEO and q.media_url:
+        return {"kind": "audio", "url": cdn.clip_video_audio_url(q.media_url, level + 1)}
     return {"kind": "text", "clues": q.clues[: level + 1]}
 
 
@@ -34,6 +37,8 @@ def _media_reveal(q: Question) -> dict:
         return {"kind": "image", "url": cdn.full_image_url(q.media_url)}
     if q.media_type == MediaType.AUDIO and q.media_url:
         return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
+    if q.media_type == MediaType.VIDEO and q.media_url:
+        return {"kind": "video", "url": q.media_url}
     return {"kind": "text", "clues": q.clues}
 
 
@@ -162,7 +167,8 @@ async def run_game(room: Room) -> None:
             room.current_round = idx + 1
             room.current_question = question
             await run_round(room)
-            await asyncio.sleep(REVEAL_PAUSE)
+            pause = VIDEO_REVEAL_PAUSE if question.media_type == MediaType.VIDEO else REVEAL_PAUSE
+            await asyncio.sleep(pause)
 
         room.state = GameState.FINISHED
         await manager.broadcast(room, msg_game_over(room))
