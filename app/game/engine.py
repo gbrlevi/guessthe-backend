@@ -161,6 +161,12 @@ async def run_round(room: Room) -> None:
 
     room.state = GameState.REVEAL
     await manager.broadcast(room, msg_reveal_answer(room))
+
+    # Pausa para o cliente ver a resposta/vídeo antes do scoreboard
+    q = room.current_question
+    reveal_pause = VIDEO_REVEAL_PAUSE if q and q.media_type == MediaType.VIDEO else REVEAL_PAUSE
+    await asyncio.sleep(reveal_pause)
+
     room.state = GameState.SCOREBOARD
     await manager.broadcast(room, msg_scoreboard(room))
 
@@ -187,8 +193,7 @@ async def run_game(room: Room) -> None:
             room.current_round = idx + 1
             room.current_question = question
             await run_round(room)
-            pause = VIDEO_REVEAL_PAUSE if question.media_type == MediaType.VIDEO else REVEAL_PAUSE
-            await asyncio.sleep(pause)
+            await asyncio.sleep(STARTING_PAUSE)  # pausa entre scoreboard e próximo round
 
         room.state = GameState.FINISHED
         await manager.broadcast(room, msg_game_over(room))
