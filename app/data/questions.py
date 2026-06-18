@@ -1,5 +1,3 @@
-"""Consultas em `questions`. PostgREST não tem ORDER BY RANDOM(), então buscamos
-por popularidade e embaralhamos em memória."""
 from __future__ import annotations
 
 import random
@@ -25,13 +23,9 @@ def _to_question(row: dict) -> Question:
 
 
 def list_categories() -> list[CategoryInfo]:
-    """Categorias + contagem, agregado em memória."""
     sb = get_supabase()
-    res = sb.table("questions").select("category").execute()
-    counts: dict[str, int] = {}
-    for row in res.data or []:
-        counts[row["category"]] = counts.get(row["category"], 0) + 1
-    return [CategoryInfo(category=c, count=n) for c, n in sorted(counts.items())]
+    rows = sb.rpc("category_counts", {}).execute().data or []
+    return [CategoryInfo(category=r["category"], count=r["count"]) for r in rows]
 
 
 def fetch_pool(categories: list[str]) -> list[Question]:
