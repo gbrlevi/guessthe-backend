@@ -52,3 +52,26 @@ def build_deck(categories: list[str], total_rounds: int) -> list[Question]:
 def random_question(categories: list[str] | None = None) -> Question | None:
     pool = fetch_pool(categories or [])
     return random.choice(pool) if pool else None
+
+
+def autocomplete_answers(category: str, q: str, limit: int = 8) -> list[str]:
+    if len(q) < 3:
+        return []
+    sb = get_supabase()
+    rows = (
+        sb.table("questions")
+        .select("answer")
+        .eq("category", category)
+        .ilike("answer", f"%{q}%")
+        .limit(limit)
+        .execute()
+        .data
+    ) or []
+    seen: set[str] = set()
+    result: list[str] = []
+    for r in rows:
+        a = r["answer"]
+        if a not in seen:
+            seen.add(a)
+            result.append(a)
+    return result

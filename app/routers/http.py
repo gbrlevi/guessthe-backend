@@ -36,6 +36,13 @@ def categories() -> list[CategoryInfo]:
     return qdata.list_categories()
 
 
+@router.get("/autocomplete", response_model=list[str])
+def autocomplete(category: str, q: str) -> list[str]:
+    if len(q) < 3:
+        return []
+    return qdata.autocomplete_answers(category, q)
+
+
 @router.get("/singleplayer/question")
 def singleplayer_question(category: str | None = None) -> dict:
     """1 questão pra testar pixelização — sem resposta nem URL original."""
