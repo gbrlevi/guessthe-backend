@@ -27,21 +27,16 @@ def full_image_url(original_url: str) -> str:
     return f"{_base()}/image/fetch/f_auto/{_enc(original_url)}"
 
 
-def clip_audio_url(original_url: str, seconds: int) -> str:
-    """Entrega só os primeiros N segundos via end-offset (cliente nunca tem o áudio todo)."""
-    seconds = max(1, seconds)
-    return f"{_base()}/video/fetch/eo_{seconds}/{_enc(original_url)}"
-
-
 def full_audio_url(original_url: str) -> str:
-    """Áudio completo — só no REVEAL."""
+    """Áudio original via fetch (categorias AUDIO: cries, sfx, etc.)."""
     return f"{_base()}/video/fetch/{_enc(original_url)}"
 
 
-def clip_video_audio_url(original_url: str, seconds: int) -> str:
-    """Extrai áudio do .webm e entrega só os primeiros N segundos (f_mp3 + eo_N)."""
+def question_audio_url(original_url: str, seconds: int) -> str:
+    """Áudio (mp3) do .webm para a fase de pergunta, limitado à duração do round.
+    Formato e clipe FIXOS → mesma chave de cache p/ aquecimento server-side e reuso no cliente."""
     seconds = max(1, seconds)
-    return f"{_base()}/video/fetch/eo_{seconds},f_mp3/{_enc(original_url)}"
+    return f"{_base()}/video/fetch/f_mp3,eo_{seconds}/{_enc(original_url)}"
 
 
 def reveal_level_for(elapsed_sec: int, duration: float) -> int:
