@@ -1,13 +1,10 @@
-"""Proxy de vídeo com URL opaca + suporte a Range (206).
+"""Proxy de mídia com URLs opacas (anti-cheat).
+Qualquer URL enviada ao cliente durante a fase de palpite — incluindo URLs Cloudinary que embutem a
+origem URL-encoded — vazaria a resposta. O proxy resolve ao usar apenas o UUID
+da questão (opaco) em tudo que o cliente recebe.
 
-Por que existe: a URL crua do AnimeThemes contém o nome do anime no arquivo
-(KimetsuNoYaiba-OP1.webm) — mandá-la ao cliente durante a fase de palpite
-vazaria a resposta. Aqui o cliente pede /media/video/{token} (token = UUID da
-questão, opaco), e o servidor faz o stream do .webm sem revelar a origem.
-
-Isso permite PRÉ-BUSCAR o vídeo durante o palpite (mesma URL no reveal → cache
-hit → sem delay). Teto de bytes mantém a banda do servidor sob controle: o reveal
-mostra ~6s, então poucos MB bastam.
+/media/video/{token} — stream do .webm via Range/206 (teto de 8 MB)
+/media/audio/{token} — áudio buffered (mp3/ogg, arquivo pequeno, sem Range)
 """
 from __future__ import annotations
 
@@ -25,6 +22,9 @@ router = APIRouter()
 MEDIA_TOKENS: dict[str, str] = {}
 _SIZES: dict[str, int] = {}  # cache do tamanho real (bytes) por token
 
+# token (UUID da questão) -> URL de áudio (Cloudinary mp3 ou .ogg direto)
+AUDIO_TOKENS: dict[str, str] = {}
+
 # Reveal dura ~6s; ~0,5 MB/s de bitrate → poucos MB cobrem o trecho exibido.
 MAX_BYTES = 8 * 1024 * 1024
 CHUNK = 64 * 1024
@@ -34,6 +34,10 @@ _UPSTREAM = {"User-Agent": "Mozilla/5.0", "Referer": "https://animethemes.moe/"}
 
 def register_media(token: str, url: str) -> None:
     MEDIA_TOKENS[token] = url
+
+
+def register_audio(token: str, url: str) -> None:
+    AUDIO_TOKENS[token] = url
 
 
 async def _real_total(client: httpx.AsyncClient, url: str, token: str) -> int:
@@ -97,3 +101,24 @@ async def proxy_video(token: str, range_header: str | None = Header(default=None
             "Cache-Control": "public, max-age=3600",
         },
     )
+
+
+@router.get("/media/audio/{token}")
+async def proxy_audio(token: str):
+    url = AUDIO_TOKENS.get(token)
+    if not url:
+        return Response(status_code=404)
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            r = await client.get(url, headers=_UPSTREAM)
+        if r.status_code >= 400:
+            logger.warning("audio proxy upstream %d para token %s", r.status_code, token)
+            return Response(status_code=502)
+        return Response(
+            content=r.content,
+            media_type=r.headers.get("content-type", "audio/mpeg"),
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception as exc:
+        logger.error("audio proxy erro: %s", exc)
+        return Response(status_code=502)

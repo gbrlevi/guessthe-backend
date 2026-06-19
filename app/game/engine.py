@@ -13,7 +13,7 @@ from app.game.state import GameState, Player, Room
 from app.media import cloudinary as cdn
 from app.media import warm
 from app.models.schemas import MediaType, Question
-from app.routers.media import register_media
+from app.routers.media import register_audio, register_media
 
 logger = logging.getLogger("ldkquiz.engine")
 
@@ -35,15 +35,13 @@ def _video_audio_source(q: Question) -> str | None:
     return (q.metadata or {}).get("audio_url") or q.media_url
 
 
-def _media_payload(q: Question, level: int, audio_seconds: int) -> dict:
-    """Mídia para o round. Imagens são progressivas (level); áudio/vídeo vêm completos de uma vez."""
+def _media_payload(q: Question, level: int) -> dict:
+    """Mídia para o round. Imagens são progressivas (level); áudio/vídeo vêm por URL opaca."""
     if q.media_type == MediaType.IMAGE and q.media_url:
         return {"kind": "image", "url": cdn.pixel_image_url(q.media_url, level)}
-    if q.media_type == MediaType.AUDIO and q.media_url:
-        return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
-    if q.media_type == MediaType.VIDEO and q.media_url:
-        src = _video_audio_source(q)
-        return {"kind": "audio", "url": cdn.question_audio_url(src, audio_seconds)}
+    # URL opaca: nunca envia o caminho Cloudinary/AnimeThemes que contém o nome da resposta.
+    if q.media_type in (MediaType.AUDIO, MediaType.VIDEO) and q.media_url:
+        return {"kind": "audio", "url": _audio_proxy_path(q)}
     return {"kind": "text", "clues": q.clues[: level + 1]}
 
 
@@ -52,7 +50,7 @@ def _media_reveal(q: Question) -> dict:
     if q.media_type == MediaType.IMAGE and q.media_url:
         return {"kind": "image", "url": cdn.full_image_url(q.media_url)}
     if q.media_type == MediaType.AUDIO and q.media_url:
-        return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
+        return {"kind": "audio", "url": _audio_proxy_path(q)}
     if q.media_type == MediaType.VIDEO and q.media_url:
         # URL opaca via proxy (não vaza o nome do anime); o cliente já pré-buscou no palpite.
         return {"kind": "video", "url": _video_proxy_path(q)}
@@ -60,8 +58,11 @@ def _media_reveal(q: Question) -> dict:
 
 
 def _video_proxy_path(q: Question) -> str:
-    """Caminho relativo da URL opaca; o frontend prepende a base da API."""
     return f"/media/video/{q.id}"
+
+
+def _audio_proxy_path(q: Question) -> str:
+    return f"/media/audio/{q.id}"
 
 
 def _players_public(room: Room) -> list[dict]:
@@ -107,7 +108,7 @@ def msg_question_start(room: Room) -> dict:
         "category": q.category,
         "media_type": q.media_type.value,
         "duration": room.round_duration,
-        "media": _media_payload(q, 0, _audio_seconds(room)),
+        "media": _media_payload(q, 0),
     }
     # Pré-busca do vídeo do reveal via URL OPACA (sem o nome do anime). O cliente
     # baixa durante o palpite; no reveal usa a mesma URL → cache hit → sem delay.
@@ -124,7 +125,7 @@ def msg_reveal_update(room: Room, elapsed_sec: int, level: int) -> dict:
         "type": "reveal_update",
         "level": level,
         "time_left": time_left,
-        "media": _media_payload(q, level, _audio_seconds(room)),
+        "media": _media_payload(q, level),
     }
 
 
@@ -219,14 +220,17 @@ async def run_game(room: Room) -> None:
 
         room.total_rounds = len(room.deck)
 
-        # Registra os tokens opacos do proxy de vídeo (UUID da questão -> .webm real)
+        # Registra os tokens opacos de vídeo e áudio (UUID → URL real).
+        # O cliente nunca vê URLs com o nome do anime — só os UUIDs opacos.
+        audio_secs = _audio_seconds(room)
         for q in room.deck:
             if q.media_type == MediaType.VIDEO and q.media_url:
                 register_media(q.id, q.media_url)
+                register_audio(q.id, cdn.question_audio_url(_video_audio_source(q), audio_secs))
+            elif q.media_type == MediaType.AUDIO and q.media_url:
+                register_audio(q.id, cdn.full_audio_url(q.media_url))
 
-        # Aquece o cache do Cloudinary p/ TODO o deck em background — o servidor paga
-        # o custo do transcode frio antes dos clientes pedirem (vai ficando pronto à frente).
-        audio_secs = _audio_seconds(room)
+        # Aquece o cache do Cloudinary p/ TODO o deck em background.
         room.warm_task = asyncio.create_task(warm.warm_deck(room.deck, audio_secs))
 
         await manager.broadcast(room, {"type": "game_starting", "total_rounds": room.total_rounds})
