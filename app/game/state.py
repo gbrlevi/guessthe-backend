@@ -57,6 +57,7 @@ class Room:
     round_skip: bool = False  # sinaliza fim antecipado do round
 
     task: "asyncio.Task | None" = None  # cancelável quando a sala esvazia
+    warm_task: "asyncio.Task | None" = None  # aquecimento de cache em background
 
 
 SALAS: dict[str, Room] = {}

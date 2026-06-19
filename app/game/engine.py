@@ -11,6 +11,7 @@ from app.game.manager import manager
 from app.game.scoring import compute_score, normalize
 from app.game.state import GameState, Player, Room
 from app.media import cloudinary as cdn
+from app.media import warm
 from app.models.schemas import MediaType, Question
 
 logger = logging.getLogger("ldkquiz.engine")
@@ -19,15 +20,29 @@ REVEAL_PAUSE = 4.0
 VIDEO_REVEAL_PAUSE = 6.0
 STARTING_PAUSE = 2.0
 
+AUDIO_BUFFER_SECONDS = 5   # áudio servido = duração do round + folga
+WARM_AWAIT_TIMEOUT = 10.0  # teto p/ aquecer a questão imminente antes de começar
 
-def _media_payload(q: Question, level: int) -> dict:
-    """Mídia parcial para o nível atual — sem resposta."""
+
+def _audio_seconds(room: Room) -> int:
+    return int(room.round_duration) + AUDIO_BUFFER_SECONDS
+
+
+def _video_audio_source(q: Question) -> str | None:
+    """Fonte de áudio p/ questões de vídeo: o .ogg separado (pequeno, transcoda no
+    Cloudinary) em vez do .webm gigante. Fallback: o próprio .webm (legado/sem ogg)."""
+    return (q.metadata or {}).get("audio_url") or q.media_url
+
+
+def _media_payload(q: Question, level: int, audio_seconds: int) -> dict:
+    """Mídia para o round. Imagens são progressivas (level); áudio/vídeo vêm completos de uma vez."""
     if q.media_type == MediaType.IMAGE and q.media_url:
         return {"kind": "image", "url": cdn.pixel_image_url(q.media_url, level)}
     if q.media_type == MediaType.AUDIO and q.media_url:
-        return {"kind": "audio", "url": cdn.clip_audio_url(q.media_url, level + 1)}
+        return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
     if q.media_type == MediaType.VIDEO and q.media_url:
-        return {"kind": "audio", "url": cdn.clip_video_audio_url(q.media_url, level + 1)}
+        src = _video_audio_source(q)
+        return {"kind": "audio", "url": cdn.question_audio_url(src, audio_seconds)}
     return {"kind": "text", "clues": q.clues[: level + 1]}
 
 
@@ -38,6 +53,8 @@ def _media_reveal(q: Question) -> dict:
     if q.media_type == MediaType.AUDIO and q.media_url:
         return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
     if q.media_type == MediaType.VIDEO and q.media_url:
+        # .webm cru direto do AnimeThemes: o browser faz Range nativo, sem Cloudinary
+        # (fontes grandes estouram o transcode síncrono). Caveat: Safari/iOS não toca webm.
         return {"kind": "video", "url": q.media_url}
     return {"kind": "text", "clues": q.clues}
 
@@ -77,6 +94,7 @@ def msg_round_resumed() -> dict:
 def msg_question_start(room: Room) -> dict:
     q = room.current_question
     assert q is not None
+    # Nenhuma URL de resposta vaza aqui: VIDEO só manda o áudio; o vídeo fica para o REVEAL.
     return {
         "type": "question_start",
         "round": room.current_round,
@@ -84,7 +102,7 @@ def msg_question_start(room: Room) -> dict:
         "category": q.category,
         "media_type": q.media_type.value,
         "duration": room.round_duration,
-        "media": _media_payload(q, level=0),
+        "media": _media_payload(q, 0, _audio_seconds(room)),
     }
 
 
@@ -96,7 +114,7 @@ def msg_reveal_update(room: Room, elapsed_sec: int, level: int) -> dict:
         "type": "reveal_update",
         "level": level,
         "time_left": time_left,
-        "media": _media_payload(q, level),
+        "media": _media_payload(q, level, _audio_seconds(room)),
     }
 
 
@@ -138,6 +156,10 @@ async def run_round(room: Room) -> None:
     for p in room.players.values():
         p.answered = False
         p.last_correct = False
+
+    # Garante que a mídia desta questão já está quente no Cloudinary antes de começar
+    # (o warm_deck normalmente já a aqueceu; aqui é a rede de segurança do round atual).
+    await warm.ensure_warm(q, _audio_seconds(room), timeout=WARM_AWAIT_TIMEOUT)
 
     room.paused = False
     room.round_skip = False
@@ -186,6 +208,12 @@ async def run_game(room: Room) -> None:
             return
 
         room.total_rounds = len(room.deck)
+
+        # Aquece o cache do Cloudinary p/ TODO o deck em background — o servidor paga
+        # o custo do transcode frio antes dos clientes pedirem (vai ficando pronto à frente).
+        audio_secs = _audio_seconds(room)
+        room.warm_task = asyncio.create_task(warm.warm_deck(room.deck, audio_secs))
+
         await manager.broadcast(room, {"type": "game_starting", "total_rounds": room.total_rounds})
         await asyncio.sleep(STARTING_PAUSE)
 
@@ -201,6 +229,9 @@ async def run_game(room: Room) -> None:
         logger.info("Partida da sala %s cancelada", room.code)
         raise
     finally:
+        if room.warm_task and not room.warm_task.done():
+            room.warm_task.cancel()
+        room.warm_task = None
         room.current_question = None
         room.round_started_at = None
         room.task = None
