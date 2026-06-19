@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import http, ws
+from app.routers import http, media, ws
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -22,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(http.router)
+app.include_router(media.router)
 app.include_router(ws.router)
 
 

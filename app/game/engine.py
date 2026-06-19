@@ -13,6 +13,7 @@ from app.game.state import GameState, Player, Room
 from app.media import cloudinary as cdn
 from app.media import warm
 from app.models.schemas import MediaType, Question
+from app.routers.media import register_media
 
 logger = logging.getLogger("ldkquiz.engine")
 
@@ -53,10 +54,14 @@ def _media_reveal(q: Question) -> dict:
     if q.media_type == MediaType.AUDIO and q.media_url:
         return {"kind": "audio", "url": cdn.full_audio_url(q.media_url)}
     if q.media_type == MediaType.VIDEO and q.media_url:
-        # .webm cru direto do AnimeThemes: o browser faz Range nativo, sem Cloudinary
-        # (fontes grandes estouram o transcode síncrono). Caveat: Safari/iOS não toca webm.
-        return {"kind": "video", "url": q.media_url}
+        # URL opaca via proxy (não vaza o nome do anime); o cliente já pré-buscou no palpite.
+        return {"kind": "video", "url": _video_proxy_path(q)}
     return {"kind": "text", "clues": q.clues}
+
+
+def _video_proxy_path(q: Question) -> str:
+    """Caminho relativo da URL opaca; o frontend prepende a base da API."""
+    return f"/media/video/{q.id}"
 
 
 def _players_public(room: Room) -> list[dict]:
@@ -94,8 +99,8 @@ def msg_round_resumed() -> dict:
 def msg_question_start(room: Room) -> dict:
     q = room.current_question
     assert q is not None
-    # Nenhuma URL de resposta vaza aqui: VIDEO só manda o áudio; o vídeo fica para o REVEAL.
-    return {
+    # Nenhuma URL de resposta vaza aqui: VIDEO só manda o áudio (a pergunta).
+    msg: dict = {
         "type": "question_start",
         "round": room.current_round,
         "total_rounds": room.total_rounds,
@@ -104,6 +109,11 @@ def msg_question_start(room: Room) -> dict:
         "duration": room.round_duration,
         "media": _media_payload(q, 0, _audio_seconds(room)),
     }
+    # Pré-busca do vídeo do reveal via URL OPACA (sem o nome do anime). O cliente
+    # baixa durante o palpite; no reveal usa a mesma URL → cache hit → sem delay.
+    if q.media_type == MediaType.VIDEO and q.media_url:
+        msg["prefetch_url"] = _video_proxy_path(q)
+    return msg
 
 
 def msg_reveal_update(room: Room, elapsed_sec: int, level: int) -> dict:
@@ -208,6 +218,11 @@ async def run_game(room: Room) -> None:
             return
 
         room.total_rounds = len(room.deck)
+
+        # Registra os tokens opacos do proxy de vídeo (UUID da questão -> .webm real)
+        for q in room.deck:
+            if q.media_type == MediaType.VIDEO and q.media_url:
+                register_media(q.id, q.media_url)
 
         # Aquece o cache do Cloudinary p/ TODO o deck em background — o servidor paga
         # o custo do transcode frio antes dos clientes pedirem (vai ficando pronto à frente).
