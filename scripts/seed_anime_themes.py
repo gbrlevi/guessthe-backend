@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import time
 
-from scripts.seed_common import build_question, http_client, replace_category
+from scripts.seed_common import (
+    audio_link_from,
+    build_question,
+    http_client,
+    pick_smallest_webm,
+    replace_category,
+)
 
 AT_API = "https://api.animethemes.moe"
 ANILIST_API = "https://graphql.anilist.co"
@@ -40,19 +46,26 @@ def _mal_id_from(anime: dict) -> int | None:
     return None
 
 
-def _best_video(anime: dict) -> tuple[str | None, str]:
+def _best_video(anime: dict) -> tuple[str | None, str | None, str]:
+    """(menor .webm, link .ogg do áudio, tipo do tema). Menor variante → cabe no
+    transcode do Cloudinary e baixa rápido; .ogg → áudio leve p/ a pergunta."""
     themes = anime.get("animethemes") or []
     ops = [t for t in themes if t.get("type") == "OP"]
     eds = [t for t in themes if t.get("type") == "ED"]
     candidates = ops if ops else eds
+    if not candidates:
+        return None, None, "OP"
 
-    for theme in candidates[:1]:
-        for entry in theme.get("animethemeentries") or []:
-            for video in entry.get("videos") or []:
-                link: str = video.get("link", "")
-                if link.endswith(".webm"):
-                    return link, theme.get("type", "OP")
-    return None, "OP"
+    theme = candidates[0]
+    theme_type = theme.get("type", "OP")
+    videos: list[dict] = []
+    for entry in theme.get("animethemeentries") or []:
+        videos.extend(entry.get("videos") or [])
+
+    best = pick_smallest_webm(videos)
+    if not best:
+        return None, None, theme_type
+    return best.get("link"), audio_link_from(videos), theme_type
 
 
 # ── etapa 1: catálogo AnimeThemes ────────────────────────────────────────────
@@ -67,7 +80,7 @@ def build_at_map(client) -> dict[int, dict]:
             params={
                 "page[size]": 50,
                 "page[number]": page,
-                "include": "animethemes.animethemeentries.videos,resources",
+                "include": "animethemes.animethemeentries.videos.audio,resources",
             },
             timeout=60.0,
         )
@@ -87,7 +100,7 @@ def build_at_map(client) -> dict[int, dict]:
             if not mal_id:
                 continue
 
-            video_url, theme_type = _best_video(anime)
+            video_url, audio_url, theme_type = _best_video(anime)
             if not video_url:
                 continue
 
@@ -100,6 +113,7 @@ def build_at_map(client) -> dict[int, dict]:
                 result[mal_id] = {
                     "name": anime.get("name", ""),
                     "video_url": video_url,
+                    "audio_url": audio_url,
                     "theme_type": theme_type,
                     "theme_id": theme_id,
                 }
@@ -199,6 +213,7 @@ def main() -> None:
                 media_type="video",
                 answer=answer,
                 media_url=at["video_url"],
+                audio_url=at.get("audio_url"),
                 ext_id=f"{mal_id}_{at['theme_id']}",
                 popularity=item["popularity"] // 1000,
                 aliases=aliases,
