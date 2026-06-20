@@ -30,6 +30,7 @@ class Player:
     id: str
     name: str
     ws: "WebSocket"
+    avatar: str = "fox"
     score: int = 0
     answered: bool = False
     last_correct: bool = False
@@ -40,6 +41,7 @@ class Player:
 class Room:
     code: str
     host_id: str
+    name: str = ""
     players: dict[str, Player] = field(default_factory=dict)
     state: GameState = GameState.LOBBY
     categories: list[str] = field(default_factory=list)

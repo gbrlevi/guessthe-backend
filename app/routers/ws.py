@@ -16,8 +16,11 @@ logger = logging.getLogger("ldkquiz.ws")
 router = APIRouter()
 
 
+VALID_AVATARS = {"fox","frog","panda","unicorn","octopus","dragon","lion","penguin","whale","alien","robot","wolf"}
+
+
 @router.websocket("/ws/{room_code}")
-async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str | None = None):
+async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str | None = None, avatar: str | None = None):
     room = SALAS.get(room_code.upper())
     if room is None:
         await ws.accept()
@@ -27,12 +30,13 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
 
     await manager.connect(ws)
 
+    safe_avatar = avatar if avatar in VALID_AVATARS else "fox"
     is_host = player_id is not None and player_id == room.host_id
     pid = room.host_id if is_host else uuid.uuid4().hex
-    player = Player(id=pid, name=name[:24] or "Jogador", ws=ws, is_host=is_host)
+    player = Player(id=pid, name=name[:24] or "Jogador", ws=ws, is_host=is_host, avatar=safe_avatar)
     manager.add_player(room, player)
     await manager.broadcast(room, engine.msg_lobby_update(room))
-    logger.info("%s entrou na sala %s (host=%s)", player.name, room.code, is_host)
+    logger.info("%s entrou na sala %s (host=%s, avatar=%s)", player.name, room.code, is_host, safe_avatar)
 
     try:
         while True:
@@ -75,6 +79,8 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                 # re-anuncia lobby (útil em reconexão)
                 if msg.name:
                     player.name = msg.name[:24]
+                if msg.avatar and msg.avatar in VALID_AVATARS:
+                    player.avatar = msg.avatar
                 await manager.broadcast(room, engine.msg_lobby_update(room))
 
     except WebSocketDisconnect:

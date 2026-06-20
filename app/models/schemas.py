@@ -37,6 +37,7 @@ class Question(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     host_name: str = Field(min_length=1, max_length=24)
+    room_name: str | None = Field(default=None, max_length=50)
 
 
 class CreateRoomResponse(BaseModel):
@@ -54,6 +55,7 @@ class CategoryInfo(BaseModel):
 class ClientMessage(BaseModel):
     type: Literal["join", "start_game", "submit_answer", "pause_round", "resume_round"]
     name: str | None = None
+    avatar: str | None = None
     guess: str | None = None
     categories: list[str] | None = None
     total_rounds: int | None = None
