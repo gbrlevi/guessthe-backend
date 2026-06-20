@@ -27,8 +27,25 @@ def create_room(req: CreateRoomRequest) -> CreateRoomResponse:
     """Cria sala e devolve code + host_id; host conecta via WS com esses dados."""
     code = generate_code()
     host_id = uuid.uuid4().hex
-    SALAS[code] = Room(code=code, host_id=host_id)
+    room_name = (req.room_name or "").strip() or f"Sala de {req.host_name}"
+    SALAS[code] = Room(code=code, host_id=host_id, name=room_name)
     return CreateRoomResponse(code=code, host_id=host_id)
+
+
+@router.get("/rooms")
+def list_rooms() -> list[dict]:
+    """Lista salas ativas com info pública (sem host_id, sem estado interno)."""
+    result = []
+    for room in SALAS.values():
+        result.append({
+            "code": room.code,
+            "name": room.name,
+            "player_count": len(room.players),
+            "state": room.state.value,
+            "current_round": room.current_round,
+            "total_rounds": room.total_rounds,
+        })
+    return result
 
 
 @router.get("/categories", response_model=list[CategoryInfo])
