@@ -67,7 +67,7 @@ def _audio_proxy_path(q: Question) -> str:
 
 def _players_public(room: Room) -> list[dict]:
     return [
-        {"id": p.id, "name": p.name, "score": p.score, "is_host": p.is_host}
+        {"id": p.id, "name": p.name, "score": p.score, "is_host": p.is_host, "avatar": p.avatar}
         for p in room.players.values()
     ]
 
@@ -137,7 +137,7 @@ def msg_reveal_answer(room: Room) -> dict:
         "answer": q.answer,
         "media": _media_reveal(q),
         "results": [
-            {"id": p.id, "name": p.name, "correct": p.last_correct, "score": p.score}
+            {"id": p.id, "name": p.name, "correct": p.last_correct, "score": p.score, "avatar": p.avatar}
             for p in room.players.values()
         ],
     }
@@ -317,6 +317,17 @@ async def handle_answer(room: Room, player: Player, guess: str) -> None:
 
     locked = player.answered
     await manager.send_personal(player, {"type": "answer_result", "correct": correct, "locked": locked})
+
+    # Broadcast do palpite no chat para todos os jogadores.
+    # Palpites errados aparecem com o texto; acertos escondem a resposta.
+    await manager.broadcast(room, {
+        "type": "chat_message",
+        "player_id": player.id,
+        "player_name": player.name,
+        "avatar": player.avatar,
+        "msg_type": "correct" if correct else "guess",
+        "text": "" if correct else guess,
+    })
 
     # encerra o round cedo se todos acertaram
     if room.end_on_all_correct and all(p.last_correct for p in room.players.values()):
