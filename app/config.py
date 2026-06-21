@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     rawg_api_key: str = ""
     freesound_api_key: str = ""
     gemini_api_key: str = ""
+    restcountries_api_key: str = ""
 
     cors_origins: str = "http://localhost:5173"
 

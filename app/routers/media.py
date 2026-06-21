@@ -118,24 +118,35 @@ async def proxy_audio(token: str):
     url = AUDIO_TOKENS.get(token)
     if not url:
         return Response(status_code=404)
-    try:
-        # Abre o stream com o cliente global sem ler o arquivo inteiro na RAM
-        async with http_client.stream("GET", url, headers=_UPSTREAM) as resp:
-            if resp.status_code >= 400:
-                logger.warning("audio proxy upstream %d para token %s", resp.status_code, token)
-                return Response(status_code=502)
-            
-            content_type = resp.headers.get("content-type", "audio/mpeg")
-            
-            async def audio_generator():
-                async for chunk in resp.aiter_bytes(CHUNK):
-                    yield chunk
 
-            return StreamingResponse(
-                audio_generator(),
-                media_type=content_type,
-                headers={"Cache-Control": "public, max-age=3600"},
-            )
+    # NÃO usar `async with` aqui: o corpo do StreamingResponse é consumido pelo ASGI
+    # DEPOIS que esta função retorna. Se o stream fechasse no fim do `with`, o gerador
+    # leria de uma conexão já encerrada → NS_ERROR_NET_PARTIAL_TRANSFER no cliente.
+    # Abrimos manualmente (send com stream=True lê os headers sem consumir o corpo) e
+    # fechamos no finally do gerador, quando o ASGI terminar de transmitir.
+    req = http_client.build_request("GET", url, headers=_UPSTREAM)
+    try:
+        resp = await http_client.send(req, stream=True)
     except Exception as exc:
         logger.error("audio proxy erro: %s", exc)
         return Response(status_code=502)
+
+    if resp.status_code >= 400:
+        logger.warning("audio proxy upstream %d para token %s", resp.status_code, token)
+        await resp.aclose()
+        return Response(status_code=502)
+
+    content_type = resp.headers.get("content-type", "audio/mpeg")
+
+    async def audio_generator():
+        try:
+            async for chunk in resp.aiter_bytes(CHUNK):
+                yield chunk
+        finally:
+            await resp.aclose()
+
+    return StreamingResponse(
+        audio_generator(),
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
