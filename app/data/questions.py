@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import math
 import random
 
 from app.db.supabase_client import get_supabase
 from app.models.schemas import CategoryInfo, Question
 
-POOL_SIZE = 300
+POOL_PER_CAT = 60  # máx de questões buscadas por categoria
 
 
 def _to_question(row: dict) -> Question:
@@ -29,24 +30,89 @@ def list_categories() -> list[CategoryInfo]:
 
 
 def fetch_pool(categories: list[str]) -> list[Question]:
+    """Busca um pool balanceado: mesma cota por categoria para evitar que
+    uma categoria popular domine o deck quando múltiplas estão selecionadas."""
     sb = get_supabase()
-    query = sb.table("questions").select("*")
-    if categories:
-        query = query.in_("category", categories)
-    res = query.order("popularity", desc=True).limit(POOL_SIZE).execute()
-    return [_to_question(r) for r in (res.data or [])]
+
+    if not categories:
+        # sem filtro: busca global com limit maior para variedade
+        res = (
+            sb.table("questions")
+            .select("*")
+            .order("popularity", desc=True)
+            .limit(300)
+            .execute()
+        )
+        return [_to_question(r) for r in (res.data or [])]
+
+    # Com categorias: busca por categoria, shuffle interno, depois mistura tudo.
+    all_questions: list[Question] = []
+    for cat in categories:
+        res = (
+            sb.table("questions")
+            .select("*")
+            .eq("category", cat)
+            .order("popularity", desc=True)
+            .limit(POOL_PER_CAT)
+            .execute()
+        )
+        qs = [_to_question(r) for r in (res.data or [])]
+        random.shuffle(qs)
+        all_questions.extend(qs)
+
+    return all_questions
 
 
 def build_deck(categories: list[str], total_rounds: int) -> list[Question]:
-    """Embaralha o pool e retorna N questões; repete se o pool for menor que N."""
+    """Monta o deck garantindo distribuição proporcional entre categorias.
+
+    Quando há N categorias e K rounds pedidos, cada categoria contribui com
+    ≈ K/N questões. Se uma categoria tiver poucas questões, as demais preenchem
+    o espaço restante para atingir total_rounds."""
     pool = fetch_pool(categories)
-    random.shuffle(pool)
-    if len(pool) >= total_rounds:
-        return pool[:total_rounds]
-    deck = list(pool)
-    while len(deck) < total_rounds and pool:
-        deck.append(random.choice(pool))
-    return deck
+    if not pool:
+        return []
+
+    if not categories or len(categories) <= 1:
+        # sem filtro ou categoria única: embaralha e fatia normalmente
+        random.shuffle(pool)
+        if len(pool) >= total_rounds:
+            return pool[:total_rounds]
+        deck = list(pool)
+        while len(deck) < total_rounds:
+            deck.append(random.choice(pool))
+        return deck
+
+    # Agrupa por categoria e define cota por categoria
+    by_cat: dict[str, list[Question]] = {}
+    for q in pool:
+        by_cat.setdefault(q.category, []).append(q)
+
+    # Cota base = ceil(total_rounds / nº de categorias com questões)
+    cats_with_qs = [c for c in categories if by_cat.get(c)]
+    if not cats_with_qs:
+        return []
+
+    quota = math.ceil(total_rounds / len(cats_with_qs))
+
+    deck: list[Question] = []
+    leftover: list[Question] = []
+
+    for cat in cats_with_qs:
+        qs = by_cat[cat]
+        random.shuffle(qs)
+        deck.extend(qs[:quota])
+        leftover.extend(qs[quota:])
+
+    # Se o deck ultrapassou, corta; se ficou curto, preenche com leftover
+    if len(deck) >= total_rounds:
+        random.shuffle(deck)
+        return deck[:total_rounds]
+
+    random.shuffle(leftover)
+    deck.extend(leftover[: total_rounds - len(deck)])
+    random.shuffle(deck)
+    return deck[:total_rounds]
 
 
 def random_question(categories: list[str] | None = None) -> Question | None:
