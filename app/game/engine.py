@@ -214,7 +214,7 @@ async def run_game(room: Room) -> None:
             p.score = 0
 
         room.state = GameState.STARTING
-        room.deck = build_deck(room.categories, room.total_rounds)
+        room.deck = await asyncio.to_thread(build_deck, room.categories, room.total_rounds)
         if not room.deck:
             await manager.broadcast(room, {"type": "error", "message": "Sem questões para as categorias escolhidas."})
             room.state = GameState.LOBBY

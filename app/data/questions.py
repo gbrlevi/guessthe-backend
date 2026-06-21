@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.db.supabase_client import get_supabase
 from app.models.schemas import CategoryInfo, Question
@@ -45,9 +46,9 @@ def fetch_pool(categories: list[str]) -> list[Question]:
         )
         return [_to_question(r) for r in (res.data or [])]
 
-    # Com categorias: busca por categoria, shuffle interno, depois mistura tudo.
-    all_questions: list[Question] = []
-    for cat in categories:
+    # Com categorias: busca em paralelo (uma thread por categoria) para evitar
+    # N round-trips sequenciais que travavam o event loop.
+    def _fetch_cat(cat: str) -> list[Question]:
         res = (
             sb.table("questions")
             .select("*")
@@ -58,7 +59,14 @@ def fetch_pool(categories: list[str]) -> list[Question]:
         )
         qs = [_to_question(r) for r in (res.data or [])]
         random.shuffle(qs)
-        all_questions.extend(qs)
+        return qs
+
+    all_questions: list[Question] = []
+    max_workers = min(len(categories), 8)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_fetch_cat, cat): cat for cat in categories}
+        for fut in as_completed(futures):
+            all_questions.extend(fut.result())
 
     return all_questions
 
