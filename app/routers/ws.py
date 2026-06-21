@@ -35,6 +35,9 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
     pid = room.host_id if is_host else uuid.uuid4().hex
     player = Player(id=pid, name=name[:24] or "Jogador", ws=ws, is_host=is_host, avatar=safe_avatar)
     manager.add_player(room, player)
+    # Informa ao cliente o seu PRÓPRIO id — habilita isHost autoritativo no servidor
+    # e a reatribuição de host (o cliente compara seu id ao host_id do lobby_update).
+    await manager.send_personal(player, {"type": "joined", "player_id": player.id})
     await manager.broadcast(room, engine.msg_lobby_update(room))
     logger.info("%s entrou na sala %s (host=%s, avatar=%s)", player.name, room.code, is_host, safe_avatar)
 
@@ -84,7 +87,11 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                 await manager.broadcast(room, engine.msg_lobby_update(room))
 
     except WebSocketDisconnect:
+        was_host = player.is_host
         manager.remove_player(room, player.id)
         if room.code in SALAS:
+            # Host órfão: se quem saiu era o host e ainda há gente, elege um novo.
+            if was_host and room.players:
+                engine.promote_new_host(room)
             await manager.broadcast(room, engine.msg_lobby_update(room))
         logger.info("%s saiu da sala %s", player.name, room.code)

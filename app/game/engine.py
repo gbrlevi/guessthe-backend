@@ -24,6 +24,8 @@ STARTING_PAUSE = 2.0
 AUDIO_BUFFER_SECONDS = 5   # áudio servido = duração do round + folga
 WARM_AWAIT_TIMEOUT = 10.0  # teto p/ aquecer a questão imminente antes de começar
 
+MIN_GUESS_INTERVAL = 0.35  # s entre palpites do mesmo jogador (anti-flood do feed)
+
 
 def _audio_seconds(room: Room) -> int:
     return int(room.round_duration) + AUDIO_BUFFER_SECONDS
@@ -298,6 +300,22 @@ async def handle_resume(room: Room) -> None:
     await manager.broadcast(room, {"type": "round_resumed"})
 
 
+def promote_new_host(room: Room) -> Player | None:
+    """Elege um novo host quando o atual desconecta (host órfão).
+
+    O primeiro jogador restante vira host: garante que o lobby/partida volte a ter
+    quem controla pausa/início. Atualiza `room.host_id` para refletir o novo dono.
+    Retorna o novo host (ou None se a sala ficou vazia)."""
+    if not room.players:
+        return None
+    new_host = next(iter(room.players.values()))
+    for p in room.players.values():
+        p.is_host = p.id == new_host.id
+    room.host_id = new_host.id
+    logger.info("Sala %s: host reatribuído para %s", room.code, new_host.name)
+    return new_host
+
+
 async def handle_answer(room: Room, player: Player, guess: str) -> None:
     """Valida o palpite. Com múltiplas tentativas, só trava no acerto."""
     if room.state != GameState.QUESTION or room.current_question is None:
@@ -305,7 +323,13 @@ async def handle_answer(room: Room, player: Player, guess: str) -> None:
     if player.answered:  # já travado (acertou ou sem retry)
         return
 
-    elapsed = time.monotonic() - (room.round_started_at or time.monotonic())
+    now = time.monotonic()
+    # Anti-spam: ignora silenciosamente palpites em rajada do mesmo jogador.
+    if now - player.last_guess_at < MIN_GUESS_INTERVAL:
+        return
+    player.last_guess_at = now
+
+    elapsed = now - (room.round_started_at or now)
     correct = normalize(guess) in set(room.current_question.accepted_answers)
 
     if correct:

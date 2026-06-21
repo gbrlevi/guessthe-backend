@@ -35,6 +35,7 @@ class Player:
     answered: bool = False
     last_correct: bool = False
     is_host: bool = False
+    last_guess_at: float = 0.0  # monotonic do último palpite (anti-spam)
 
 
 @dataclass
