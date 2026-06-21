@@ -87,6 +87,7 @@ def msg_lobby_update(room: Room) -> dict:
             "round_duration": room.round_duration,
             "allow_multiple_attempts": room.allow_multiple_attempts,
             "end_on_all_correct": room.end_on_all_correct,
+            "depixel_speed": room.depixel_speed,
         },
     }
 
@@ -151,7 +152,7 @@ def msg_scoreboard(room: Room) -> dict:
         "type": "scoreboard",
         "round": room.current_round,
         "total_rounds": room.total_rounds,
-        "ranking": [{"name": p.name, "score": p.score} for p in ranking],
+        "ranking": [{"id": p.id, "name": p.name, "score": p.score, "avatar": p.avatar} for p in ranking],
     }
 
 
@@ -159,7 +160,7 @@ def msg_game_over(room: Room) -> dict:
     ranking = sorted(room.players.values(), key=lambda p: p.score, reverse=True)
     return {
         "type": "game_over",
-        "ranking": [{"name": p.name, "score": p.score} for p in ranking],
+        "ranking": [{"id": p.id, "name": p.name, "score": p.score, "avatar": p.avatar} for p in ranking],
     }
 
 
@@ -191,7 +192,7 @@ async def run_round(room: Room) -> None:
         if room.round_skip:
             break
 
-        level = cdn.reveal_level_for(sec, room.round_duration)
+        level = cdn.reveal_level_for(sec, room.round_duration, room.depixel_speed)
         await manager.broadcast(room, msg_reveal_update(room, sec, level))
 
     room.state = GameState.REVEAL
@@ -276,6 +277,7 @@ def start_game(
     round_duration: float | None = None,
     allow_multiple_attempts: bool | None = None,
     end_on_all_correct: bool | None = None,
+    depixel_speed: int | None = None,
 ) -> bool:
     """Dispara a partida. Retorna False se já rolando."""
     if room.task and not room.task.done():
@@ -288,6 +290,8 @@ def start_game(
         room.allow_multiple_attempts = allow_multiple_attempts
     if end_on_all_correct is not None:
         room.end_on_all_correct = end_on_all_correct
+    if depixel_speed is not None:
+        room.depixel_speed = max(1, min(10, int(depixel_speed)))
     room.task = asyncio.create_task(run_game(room))
     return True
 
