@@ -53,7 +53,7 @@ class CategoryInfo(BaseModel):
 # ----- Tipos das mensagens WebSocket recebidas do cliente -----
 
 class ClientMessage(BaseModel):
-    type: Literal["join", "start_game", "submit_answer", "pause_round", "resume_round"]
+    type: Literal["join", "start_game", "submit_answer", "pause_round", "resume_round", "update_settings"]
     name: str | None = None
     avatar: str | None = None
     guess: str | None = None
@@ -62,3 +62,4 @@ class ClientMessage(BaseModel):
     round_duration: float | None = None
     allow_multiple_attempts: bool | None = None
     end_on_all_correct: bool | None = None
+    depixel_speed: int | None = None

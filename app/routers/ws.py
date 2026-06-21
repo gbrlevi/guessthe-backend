@@ -66,6 +66,7 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                     msg.round_duration,
                     msg.allow_multiple_attempts,
                     msg.end_on_all_correct,
+                    msg.depixel_speed,
                 )
                 if not ok:
                     await manager.send_personal(player, {"type": "error", "message": "Partida já em andamento."})
@@ -77,6 +78,26 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
             elif msg.type == "resume_round":
                 if player.is_host:
                     await engine.handle_resume(room)
+
+            elif msg.type == "update_settings":
+                # Host atualiza configurações em tempo real antes de iniciar o jogo
+                if not player.is_host:
+                    continue
+                if room.state not in (GameState.LOBBY, GameState.FINISHED):
+                    continue
+                if msg.categories is not None:
+                    room.categories = msg.categories
+                if msg.total_rounds is not None:
+                    room.total_rounds = max(1, min(50, msg.total_rounds))
+                if msg.round_duration is not None:
+                    room.round_duration = max(5.0, min(120.0, msg.round_duration))
+                if msg.allow_multiple_attempts is not None:
+                    room.allow_multiple_attempts = msg.allow_multiple_attempts
+                if msg.end_on_all_correct is not None:
+                    room.end_on_all_correct = msg.end_on_all_correct
+                if msg.depixel_speed is not None:
+                    room.depixel_speed = max(1, min(10, msg.depixel_speed))
+                await manager.broadcast(room, engine.msg_lobby_update(room))
 
             elif msg.type == "join":
                 # re-anuncia lobby (útil em reconexão)
