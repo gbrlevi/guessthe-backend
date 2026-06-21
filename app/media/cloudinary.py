@@ -4,7 +4,9 @@ from urllib.parse import quote
 
 from app.config import settings
 
-IMAGE_WIDTHS = [8, 16, 32, 64]  # nível 0..3: imagem vai ficando mais nítida
+# 10 níveis progressivos: começa pixelado (8px) e chega a 512px ainda durante
+# a fase de palpite. A imagem completa só aparece no reveal (full_image_url).
+IMAGE_WIDTHS = [8, 12, 18, 28, 42, 64, 96, 160, 256, 512]
 MAX_LEVEL = len(IMAGE_WIDTHS) - 1
 
 
@@ -39,9 +41,24 @@ def question_audio_url(original_url: str, seconds: int) -> str:
     return f"{_base()}/video/fetch/f_mp3,eo_{seconds}/{_enc(original_url)}"
 
 
-def reveal_level_for(elapsed_sec: int, duration: float) -> int:
-    """Segundo decorrido → nível 0..MAX_LEVEL (divide o round em faixas iguais)."""
+def reveal_level_for(elapsed_sec: int, duration: float, depixel_speed: int = 5) -> int:
+    """Segundo decorrido → nível 0..MAX_LEVEL com velocidade controlada pelo host.
+
+    depixel_speed 1..10:
+      - 1 = muito lento: mantém pixelizado quase o round inteiro (revelação só nos últimos 20%)
+      - 5 = padrão: revelação linear ao longo do round
+      - 10 = rápido: despixeliza nos primeiros 40% do round
+    """
     if duration <= 0:
         return MAX_LEVEL
+
+    speed = max(1, min(10, depixel_speed))
+    # Mapeia speed 1..10 para um expoente que comprime/expande a curva.
+    # speed=5 → expoente=1.0 (linear); speed<5 → curva côncava (lenta no início);
+    # speed>5 → curva convexa (rápida no início).
+    exponent = 2.0 - (speed - 1) * (1.8 / 9)  # varia de 2.0 (speed=1) a 0.2 (speed=10)
+
     frac = (elapsed_sec + 1) / duration
-    return max(0, min(MAX_LEVEL, int(frac * (MAX_LEVEL + 1))))
+    frac = max(0.0, min(1.0, frac))
+    curved = frac ** exponent
+    return max(0, min(MAX_LEVEL, int(curved * (MAX_LEVEL + 1))))

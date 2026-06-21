@@ -56,6 +56,7 @@ class Room:
 
     allow_multiple_attempts: bool = True
     end_on_all_correct: bool = True
+    depixel_speed: int = 5  # 1 (lento) a 10 (rápido) — controlado pelo host
     paused: bool = False
     round_skip: bool = False  # sinaliza fim antecipado do round
 
