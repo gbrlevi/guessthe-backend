@@ -8,7 +8,7 @@ import time
 from app.config import settings
 from app.data.questions import build_deck
 from app.game.manager import manager
-from app.game.scoring import compute_score, normalize
+from app.game.scoring import compute_score, is_close_answer, normalize
 from app.game.state import GameState, Player, Room
 from app.media import cloudinary as cdn
 from app.media import warm
@@ -351,6 +351,10 @@ async def handle_answer(room: Room, player: Player, guess: str) -> None:
 
     locked = player.answered
     await manager.send_personal(player, {"type": "answer_result", "correct": correct, "locked": locked})
+
+    # Notifica apenas o jogador que seu palpite estava próximo (similar ao Gartic).
+    if not correct and is_close_answer(guess, room.current_question.accepted_answers):
+        await manager.send_personal(player, {"type": "close_answer"})
 
     # Broadcast do palpite no chat para todos os jogadores.
     # Palpites errados aparecem com o texto; acertos escondem a resposta.
