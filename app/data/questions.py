@@ -128,6 +128,35 @@ def random_question(categories: list[str] | None = None) -> Question | None:
     return random.choice(pool) if pool else None
 
 
+def all_answers(category: str) -> list[str]:
+    """Todas as respostas distintas de uma categoria, para autocomplete local
+    no cliente (sem 1 requisição por tecla). Pagina porque o Supabase devolve
+    no máx. 1000 linhas por consulta."""
+    sb = get_supabase()
+    seen: set[str] = set()
+    result: list[str] = []
+    page_size = 1000
+    page = 0
+    while True:
+        rows = (
+            sb.table("questions")
+            .select("answer")
+            .eq("category", category)
+            .range(page * page_size, page * page_size + page_size - 1)
+            .execute()
+            .data
+        ) or []
+        for r in rows:
+            a = r["answer"]
+            if a not in seen:
+                seen.add(a)
+                result.append(a)
+        if len(rows) < page_size:
+            break
+        page += 1
+    return result
+
+
 def autocomplete_answers(category: str, q: str, limit: int = 8) -> list[str]:
     if len(q) < 3:
         return []

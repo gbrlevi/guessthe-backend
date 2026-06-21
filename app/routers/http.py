@@ -60,6 +60,13 @@ def autocomplete(category: str, q: str) -> list[str]:
     return qdata.autocomplete_answers(category, q)
 
 
+@router.get("/autocomplete/all", response_model=list[str])
+def autocomplete_all(category: str) -> list[str]:
+    """Lista completa de títulos da categoria → o cliente pré-carrega uma vez
+    por round e faz o autocomplete localmente (instantâneo, zero req. por tecla)."""
+    return qdata.all_answers(category)
+
+
 @router.get("/singleplayer/question")
 def singleplayer_question(category: str | None = None) -> dict:
     """1 questão pra testar pixelização — sem resposta nem URL original."""
