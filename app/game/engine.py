@@ -249,6 +249,12 @@ async def run_game(room: Room) -> None:
     except asyncio.CancelledError:
         logger.info("Partida da sala %s cancelada", room.code)
         raise
+    except Exception as exc:
+        logger.exception("Partida da sala %s encerrou com erro inesperado: %s", room.code, exc)
+        try:
+            await manager.broadcast(room, {"type": "error", "message": "Erro interno — a partida foi encerrada."})
+        except Exception:
+            pass
     finally:
         if room.warm_task and not room.warm_task.done():
             room.warm_task.cancel()

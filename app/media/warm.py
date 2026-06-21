@@ -76,7 +76,9 @@ async def ensure_warm(q: Question, audio_seconds: int, timeout: float) -> None:
     if not urls:
         return
     try:
-        async with httpx.AsyncClient(timeout=WARM_REQUEST_TIMEOUT, follow_redirects=True) as client:
-            await asyncio.wait_for(_warm_many(client, urls), timeout=timeout)
-    except Exception:  # noqa: BLE001 — best-effort; CancelledError (BaseException) ainda propaga
+        # Usa o timeout do próprio httpx em vez de asyncio.wait_for para evitar
+        # que CancelledError do cleanup escape como BaseException para o game loop.
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            await _warm_many(client, urls)
+    except Exception:  # noqa: BLE001 — best-effort
         logger.info("ensure_warm: seguindo sem aquecimento completo da questão")
