@@ -18,6 +18,18 @@ logger = logging.getLogger("ldkquiz.media")
 
 router = APIRouter()
 
+http_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(60.0, connect=10.0),
+    follow_redirects=True,
+    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+)
+
+
+@router.on_event("shutdown")
+async def shutdown_event():
+    await http_client.aclose()
+
+
 # token (UUID da questão) -> URL real do .webm. Populado pela engine no início da partida.
 MEDIA_TOKENS: dict[str, str] = {}
 _SIZES: dict[str, int] = {}  # cache do tamanho real (bytes) por token
@@ -75,8 +87,7 @@ async def proxy_video(token: str, range_header: str | None = Header(default=None
     if not url:
         return Response(status_code=404)
 
-    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as probe:
-        real_total = await _real_total(probe, url, token)
+    real_total = await _real_total(http_client, url, token)
     advertised = min(real_total, MAX_BYTES)  # teto: cliente nunca pede além disso
 
     start, end = _parse_range(range_header, advertised)
@@ -85,10 +96,9 @@ async def proxy_video(token: str, range_header: str | None = Header(default=None
 
     async def streamer():
         headers = {**_UPSTREAM, "Range": f"bytes={start}-{end}"}
-        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-            async with client.stream("GET", url, headers=headers) as resp:
-                async for chunk in resp.aiter_bytes(CHUNK):
-                    yield chunk
+        async with http_client.stream("GET", url, headers=headers) as resp:
+            async for chunk in resp.aiter_bytes(CHUNK):
+                yield chunk
 
     return StreamingResponse(
         streamer(),
@@ -109,16 +119,23 @@ async def proxy_audio(token: str):
     if not url:
         return Response(status_code=404)
     try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            r = await client.get(url, headers=_UPSTREAM)
-        if r.status_code >= 400:
-            logger.warning("audio proxy upstream %d para token %s", r.status_code, token)
-            return Response(status_code=502)
-        return Response(
-            content=r.content,
-            media_type=r.headers.get("content-type", "audio/mpeg"),
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
+        # Abre o stream com o cliente global sem ler o arquivo inteiro na RAM
+        async with http_client.stream("GET", url, headers=_UPSTREAM) as resp:
+            if resp.status_code >= 400:
+                logger.warning("audio proxy upstream %d para token %s", resp.status_code, token)
+                return Response(status_code=502)
+            
+            content_type = resp.headers.get("content-type", "audio/mpeg")
+            
+            async def audio_generator():
+                async for chunk in resp.aiter_bytes(CHUNK):
+                    yield chunk
+
+            return StreamingResponse(
+                audio_generator(),
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
     except Exception as exc:
         logger.error("audio proxy erro: %s", exc)
         return Response(status_code=502)
