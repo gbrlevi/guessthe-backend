@@ -97,6 +97,10 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                     room.end_on_all_correct = msg.end_on_all_correct
                 if msg.depixel_speed is not None:
                     room.depixel_speed = max(1, min(10, msg.depixel_speed))
+                if msg.tension_enabled is not None:
+                    room.tension_enabled = msg.tension_enabled
+                if msg.tension_ratio is not None:
+                    room.tension_ratio = max(0.1, min(0.95, msg.tension_ratio))
                 await manager.broadcast(room, engine.msg_lobby_update(room))
 
             elif msg.type == "join":

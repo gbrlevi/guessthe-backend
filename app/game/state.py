@@ -57,6 +57,8 @@ class Room:
     allow_multiple_attempts: bool = True
     end_on_all_correct: bool = True
     depixel_speed: int = 5  # 1 (lento) a 10 (rápido) — controlado pelo host
+    tension_enabled: bool = True
+    tension_ratio: float = 0.7  # fração do total acima da qual as rodadas são de tensão (ex.: 0.7 = últimos 30%)
     paused: bool = False
     round_skip: bool = False  # sinaliza fim antecipado do round
 

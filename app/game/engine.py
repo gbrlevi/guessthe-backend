@@ -21,6 +21,18 @@ REVEAL_PAUSE = 4.0
 VIDEO_REVEAL_PAUSE = 6.0
 STARTING_PAUSE = 2.0
 
+# Modo Tensão: as últimas 30% das rodadas valem PONTUAÇÃO DOBRADA. Antes da
+# primeira delas o servidor envia `tension_intro` e segura o próximo round por
+# TENSION_INTERSTITIAL s (assim o cronômetro do round só começa depois do overlay
+# do cliente — o jogador não perde tempo de palpite com a "calmaria").
+TENSION_RATIO = 0.7
+TENSION_INTERSTITIAL = 5.0
+TENSION_MULTIPLIER = 2
+
+
+def _is_tension_round(round_num: int, total: int, ratio: float = TENSION_RATIO) -> bool:
+    return total > 0 and round_num > total * ratio
+
 AUDIO_BUFFER_SECONDS = 5   # áudio servido = duração do round + folga
 WARM_AWAIT_TIMEOUT = 10.0  # teto p/ aquecer a questão imminente antes de começar
 
@@ -88,6 +100,8 @@ def msg_lobby_update(room: Room) -> dict:
             "allow_multiple_attempts": room.allow_multiple_attempts,
             "end_on_all_correct": room.end_on_all_correct,
             "depixel_speed": room.depixel_speed,
+            "tension_enabled": room.tension_enabled,
+            "tension_ratio": room.tension_ratio,
         },
     }
 
@@ -153,6 +167,21 @@ def msg_scoreboard(room: Room) -> dict:
         "round": room.current_round,
         "total_rounds": room.total_rounds,
         "ranking": [{"id": p.id, "name": p.name, "score": p.score, "avatar": p.avatar} for p in ranking],
+    }
+
+
+def msg_tension_intro(room: Room, interstitial_ms: int) -> dict:
+    """Interstício do Modo Tensão (antes da 1ª rodada dos últimos 30%)."""
+    ranking = sorted(room.players.values(), key=lambda p: p.score, reverse=True)
+    return {
+        "type": "tension_intro",
+        "round": room.current_round,
+        "total_rounds": room.total_rounds,
+        "interstitial_ms": interstitial_ms,
+        "ranking": [
+            {"id": p.id, "name": p.name, "score": p.score, "avatar": p.avatar}
+            for p in ranking[:3]
+        ],
     }
 
 
@@ -242,6 +271,19 @@ async def run_game(room: Room) -> None:
         for idx, question in enumerate(room.deck):
             room.current_round = idx + 1
             room.current_question = question
+
+            # Calmaria antes da tempestade: na PRIMEIRA rodada de tensão (e desde
+            # que tenha havido ao menos uma rodada normal antes), avisa os clientes
+            # e segura o início — o cronômetro do round só corre após o overlay.
+            if (
+                room.tension_enabled
+                and room.current_round > 1
+                and _is_tension_round(room.current_round, room.total_rounds, room.tension_ratio)
+                and not _is_tension_round(room.current_round - 1, room.total_rounds, room.tension_ratio)
+            ):
+                await manager.broadcast(room, msg_tension_intro(room, int(TENSION_INTERSTITIAL * 1000)))
+                await asyncio.sleep(TENSION_INTERSTITIAL)
+
             await run_round(room)
             await asyncio.sleep(STARTING_PAUSE)  # pausa entre scoreboard e próximo round
 
@@ -345,7 +387,13 @@ async def handle_answer(room: Room, player: Player, guess: str) -> None:
     if correct:
         player.last_correct = True
         player.answered = True
-        player.score += compute_score(elapsed, room.round_duration)
+        # Rodadas finais valem em dobro (Modo Tensão).
+        multiplier = (
+            TENSION_MULTIPLIER
+            if room.tension_enabled and _is_tension_round(room.current_round, room.total_rounds, room.tension_ratio)
+            else 1
+        )
+        player.score += compute_score(elapsed, room.round_duration) * multiplier
     elif not room.allow_multiple_attempts:
         player.answered = True  # trava no erro quando sem retry
 

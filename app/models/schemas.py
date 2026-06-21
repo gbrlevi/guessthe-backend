@@ -63,3 +63,5 @@ class ClientMessage(BaseModel):
     allow_multiple_attempts: bool | None = None
     end_on_all_correct: bool | None = None
     depixel_speed: int | None = None
+    tension_enabled: bool | None = None
+    tension_ratio: float | None = None
