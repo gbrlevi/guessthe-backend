@@ -7,9 +7,9 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.game import engine
+from app.game import engine, termo_engine
 from app.game.manager import manager
-from app.game.state import SALAS, GameState, Player
+from app.game.state import SALAS, GameMode, GameState, Player, TermoMode
 from app.models.schemas import ClientMessage
 
 logger = logging.getLogger("ldkquiz.ws")
@@ -17,6 +17,22 @@ router = APIRouter()
 
 
 VALID_AVATARS = {"fox","frog","panda","unicorn","octopus","dragon","lion","penguin","whale","alien","robot","wolf"}
+
+
+def _apply_termo_settings(room, msg: ClientMessage) -> None:
+    """Aplica/clampa as configs do modo Termo na sala (host, em LOBBY/FINISHED)."""
+    if msg.game_mode is not None:
+        room.game_mode = GameMode(msg.game_mode.value)
+    if msg.termo_mode is not None:
+        room.termo_mode = TermoMode(msg.termo_mode.value)
+    if msg.termo_round_duration is not None:
+        room.termo_round_duration = max(10.0, min(300.0, msg.termo_round_duration))
+    if msg.submission_cooldown is not None:
+        room.submission_cooldown = max(0.0, min(5.0, msg.submission_cooldown))
+    if msg.termo_hint_delay is not None:
+        room.termo_hint_delay = max(0.0, min(room.termo_round_duration, msg.termo_hint_delay))
+    if msg.mixed_termo_ratio is not None:
+        room.mixed_termo_ratio = max(0.0, min(1.0, msg.mixed_termo_ratio))
 
 
 @router.websocket("/ws/{room_code}")
@@ -39,6 +55,11 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
     # e a reatribuição de host (o cliente compara seu id ao host_id do lobby_update).
     await manager.send_personal(player, {"type": "joined", "player_id": player.id})
     await manager.broadcast(room, engine.msg_lobby_update(room))
+    # Reconexão/entrada no meio de uma rodada de Termo: ressincroniza a grade
+    # (sem a palavra — apenas tamanho/tema/parâmetros).
+    if room.game_mode == GameMode.TERMO and room.state == GameState.QUESTION and room.termo_round is not None:
+        from app.game import termo as _termo
+        await manager.send_personal(player, _termo.msg_termo_question_start(room))
     logger.info("%s entrou na sala %s (host=%s, avatar=%s)", player.name, room.code, is_host, safe_avatar)
 
     try:
@@ -53,12 +74,16 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
             if msg.type == "submit_answer":
                 await engine.handle_answer(room, player, msg.guess or "")
 
+            elif msg.type == "submit_guess":
+                await termo_engine.handle_guess(room, player, msg.guess or "")
+
             elif msg.type == "start_game":
                 if not player.is_host:
                     await manager.send_personal(player, {"type": "error", "message": "Apenas o host inicia."})
                     continue
                 if room.state not in (GameState.LOBBY, GameState.FINISHED):
                     continue
+                _apply_termo_settings(room, msg)  # game_mode definido ANTES de criar a task
                 ok = engine.start_game(
                     room,
                     msg.categories or [],
@@ -101,6 +126,7 @@ async def ws_endpoint(ws: WebSocket, room_code: str, name: str, player_id: str |
                     room.tension_enabled = msg.tension_enabled
                 if msg.tension_ratio is not None:
                     room.tension_ratio = max(0.1, min(0.95, msg.tension_ratio))
+                _apply_termo_settings(room, msg)
                 await manager.broadcast(room, engine.msg_lobby_update(room))
 
             elif msg.type == "join":

@@ -25,6 +25,57 @@ class GameState(str, Enum):
     FINISHED = "finished"
 
 
+class GameMode(str, Enum):
+    QUIZ = "quiz"
+    TERMO = "termo"
+    MISTO = "misto"  # quiz + termo intercalados na mesma partida
+
+
+class TermoMode(str, Enum):
+    PVP_INDIVIDUAL = "pvp_individual"
+    TABULEIRO_COMPARTILHADO = "tabuleiro_compartilhado"
+
+
+@dataclass
+class TermoSubmission:
+    """Uma linha do tabuleiro (palpite + cores resultantes)."""
+    player_id: str
+    player_name: str
+    avatar: str
+    letters: list[str]
+    colors: list[str]  # "correct" | "present" | "absent" por posição
+    at: float          # monotonic
+
+
+@dataclass
+class TermoPlayerState:
+    """Estado por jogador, por rodada (usado no PVP_INDIVIDUAL)."""
+    attempts: list[TermoSubmission] = field(default_factory=list)
+    solved: bool = False
+    solved_at: float | None = None
+
+
+@dataclass
+class TermoRoundState:
+    """Estado da rodada de Termo. Reconstruído a cada rodada e guardado em Room.
+
+    `word`/`hint` são SEGREDO: nunca serializados antes do REVEAL (a dica só após
+    `termo_hint_delay`)."""
+    word: str          # MAIÚSCULA, sem acentos — nunca sai antes do REVEAL
+    length: int
+    theme: str
+    hint: str          # segredo até termo_hint_delay
+    hint_sent: bool = False
+    max_attempts: int = 6
+    # Tabuleiro compartilhado
+    shared_grid: list[TermoSubmission] = field(default_factory=list)
+    discovered_correct: set[int] = field(default_factory=set)   # posições verdes (global)
+    discovered_present: set[str] = field(default_factory=set)   # letras amarelas (global)
+    solved_by: str | None = None
+    # Por jogador (PVP)
+    players: dict[str, TermoPlayerState] = field(default_factory=dict)
+
+
 @dataclass
 class Player:
     id: str
@@ -61,6 +112,16 @@ class Room:
     tension_ratio: float = 0.7  # fração do total acima da qual as rodadas são de tensão (ex.: 0.7 = últimos 30%)
     paused: bool = False
     round_skip: bool = False  # sinaliza fim antecipado do round
+
+    # --- Modo Termo (segundo modo de jogo) ---
+    game_mode: GameMode = GameMode.QUIZ
+    termo_mode: TermoMode = TermoMode.PVP_INDIVIDUAL
+    termo_round_duration: float = 60.0  # campo dedicado (round_duration carrega semântica de quiz/depixel)
+    submission_cooldown: float = 2.0    # 0..5s entre palpites (visível ao jogador)
+    termo_hint_delay: float = 30.0      # s até revelar a dica no meio da rodada
+    mixed_termo_ratio: float = 0.5      # no modo MISTO: fração das rodadas que são de Termo (0..1)
+    cooldown_tracker: dict[str, float] = field(default_factory=dict)  # player_id → monotonic do último palpite
+    termo_round: "TermoRoundState | None" = None
 
     task: "asyncio.Task | None" = None  # cancelável quando a sala esvazia
     warm_task: "asyncio.Task | None" = None  # aquecimento de cache em background

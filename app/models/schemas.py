@@ -52,8 +52,22 @@ class CategoryInfo(BaseModel):
 
 # ----- Tipos das mensagens WebSocket recebidas do cliente -----
 
+class GameMode(str, Enum):
+    QUIZ = "quiz"
+    TERMO = "termo"
+    MISTO = "misto"
+
+
+class TermoMode(str, Enum):
+    PVP_INDIVIDUAL = "pvp_individual"
+    TABULEIRO_COMPARTILHADO = "tabuleiro_compartilhado"
+
+
 class ClientMessage(BaseModel):
-    type: Literal["join", "start_game", "submit_answer", "pause_round", "resume_round", "update_settings"]
+    type: Literal[
+        "join", "start_game", "submit_answer", "submit_guess",
+        "pause_round", "resume_round", "update_settings",
+    ]
     name: str | None = None
     avatar: str | None = None
     guess: str | None = None
@@ -65,3 +79,10 @@ class ClientMessage(BaseModel):
     depixel_speed: int | None = None
     tension_enabled: bool | None = None
     tension_ratio: float | None = None
+    # Modo Termo
+    game_mode: GameMode | None = None
+    termo_mode: TermoMode | None = None
+    termo_round_duration: float | None = None
+    submission_cooldown: float | None = None
+    termo_hint_delay: float | None = None
+    mixed_termo_ratio: float | None = None

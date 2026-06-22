@@ -6,10 +6,10 @@ import logging
 import time
 
 from app.config import settings
-from app.data.questions import build_deck
+from app.data.questions import build_deck, build_mixed_deck
 from app.game.manager import manager
 from app.game.scoring import compute_score, is_close_answer, normalize
-from app.game.state import GameState, Player, Room
+from app.game.state import GameMode, GameState, Player, Room
 from app.media import cloudinary as cdn
 from app.media import warm
 from app.models.schemas import MediaType, Question
@@ -102,6 +102,12 @@ def msg_lobby_update(room: Room) -> dict:
             "depixel_speed": room.depixel_speed,
             "tension_enabled": room.tension_enabled,
             "tension_ratio": room.tension_ratio,
+            "game_mode": room.game_mode.value,
+            "termo_mode": room.termo_mode.value,
+            "termo_round_duration": room.termo_round_duration,
+            "submission_cooldown": room.submission_cooldown,
+            "termo_hint_delay": room.termo_hint_delay,
+            "mixed_termo_ratio": room.mixed_termo_ratio,
         },
     }
 
@@ -196,6 +202,7 @@ def msg_game_over(room: Room) -> dict:
 async def run_round(room: Room) -> None:
     q = room.current_question
     assert q is not None
+    room.termo_round = None  # rodada de quiz: limpa qualquer estado de Termo (modo misto)
     for p in room.players.values():
         p.answered = False
         p.last_correct = False
@@ -238,12 +245,22 @@ async def run_round(room: Room) -> None:
 
 async def run_game(room: Room) -> None:
     """STARTING → N rounds → FINISHED. Roda como room.task."""
+    if room.game_mode == GameMode.TERMO:
+        # FSM paralela do Termo (import tardio: termo_engine importa este módulo).
+        from app.game import termo_engine
+        await termo_engine.run_termo_game(room)
+        return
     try:
         for p in room.players.values():
             p.score = 0
 
         room.state = GameState.STARTING
-        room.deck = await asyncio.to_thread(build_deck, room.categories, room.total_rounds)
+        if room.game_mode == GameMode.MISTO:
+            room.deck = await asyncio.to_thread(
+                build_mixed_deck, room.categories, room.total_rounds, room.mixed_termo_ratio
+            )
+        else:
+            room.deck = await asyncio.to_thread(build_deck, room.categories, room.total_rounds)
         if not room.deck:
             await manager.broadcast(room, {"type": "error", "message": "Sem questões para as categorias escolhidas."})
             room.state = GameState.LOBBY
@@ -284,7 +301,12 @@ async def run_game(room: Room) -> None:
                 await manager.broadcast(room, msg_tension_intro(room, int(TENSION_INTERSTITIAL * 1000)))
                 await asyncio.sleep(TENSION_INTERSTITIAL)
 
-            await run_round(room)
+            # No modo MISTO, cada rodada é quiz ou termo conforme a categoria do item.
+            if question.category.startswith("termo_"):
+                from app.game import termo_engine
+                await termo_engine.run_termo_round(room)
+            else:
+                await run_round(room)
             await asyncio.sleep(STARTING_PAUSE)  # pausa entre scoreboard e próximo round
 
         room.state = GameState.FINISHED
@@ -304,6 +326,8 @@ async def run_game(room: Room) -> None:
         room.warm_task = None
         room.current_question = None
         room.round_started_at = None
+        room.termo_round = None
+        room.cooldown_tracker.clear()
         room.task = None
         if room.state != GameState.FINISHED:
             room.state = GameState.LOBBY
@@ -371,6 +395,8 @@ def promote_new_host(room: Room) -> Player | None:
 async def handle_answer(room: Room, player: Player, guess: str) -> None:
     """Valida o palpite. Com múltiplas tentativas, só trava no acerto."""
     if room.state != GameState.QUESTION or room.current_question is None:
+        return
+    if room.termo_round is not None:  # rodada de Termo ativa → ignora palpite de quiz (modo misto)
         return
     if player.answered:  # já travado (acertou ou sem retry)
         return

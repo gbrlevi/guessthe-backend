@@ -5,7 +5,8 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.db.supabase_client import get_supabase
-from app.models.schemas import CategoryInfo, Question
+from app.game.termo import fold_upper
+from app.models.schemas import CategoryInfo, MediaType, Question
 
 POOL_PER_CAT = 60  # máx de questões buscadas por categoria
 
@@ -36,12 +37,9 @@ def fetch_pool(categories: list[str]) -> list[Question]:
     sb = get_supabase()
 
     if not categories:
-        # sem filtro: busca global com limit maior para variedade
+        # sem filtro: busca global com limit maior para variedade usando RPC aleatório
         res = (
-            sb.table("questions")
-            .select("*")
-            .order("popularity", desc=True)
-            .limit(300)
+            sb.rpc("get_random_questions", {"p_category": None, "p_limit": 300})
             .execute()
         )
         return [_to_question(r) for r in (res.data or [])]
@@ -50,11 +48,7 @@ def fetch_pool(categories: list[str]) -> list[Question]:
     # N round-trips sequenciais que travavam o event loop.
     def _fetch_cat(cat: str) -> list[Question]:
         res = (
-            sb.table("questions")
-            .select("*")
-            .eq("category", cat)
-            .order("popularity", desc=True)
-            .limit(POOL_PER_CAT)
+            sb.rpc("get_random_questions", {"p_category": cat, "p_limit": POOL_PER_CAT})
             .execute()
         )
         qs = [_to_question(r) for r in (res.data or [])]
@@ -121,6 +115,41 @@ def build_deck(categories: list[str], total_rounds: int) -> list[Question]:
     deck.extend(leftover[: total_rounds - len(deck)])
     random.shuffle(deck)
     return deck[:total_rounds]
+
+
+def build_termo_deck(categories: list[str], total_rounds: int) -> list[Question]:
+    """Deck do modo Termo. Considera só categorias `termo_*` e mantém apenas
+    questões de texto cuja resposta (maiúscula, sem acento) seja alfabética e
+    de 3 a 11 letras — reaproveita o balanceamento de `build_deck`."""
+    cats = [c for c in categories if c.startswith("termo_")]
+    deck = build_deck(cats, total_rounds)
+    out: list[Question] = []
+    for q in deck:
+        w = fold_upper(q.answer)
+        if q.media_type == MediaType.TEXT and w.isalpha() and 3 <= len(w) <= 11:
+            out.append(q)
+    return out
+
+
+def build_mixed_deck(categories: list[str], total_rounds: int, termo_ratio: float) -> list[Question]:
+    """Deck do modo MISTO: intercala questões de quiz e palavras de Termo na mesma
+    partida. `termo_ratio` (0..1) é a fração de rodadas de Termo. Se só houver um
+    tipo de categoria selecionado, cai no deck puro daquele tipo."""
+    termo_cats = [c for c in categories if c.startswith("termo_")]
+    quiz_cats = [c for c in categories if not c.startswith("termo_")]
+    if not termo_cats:
+        return build_deck(quiz_cats, total_rounds)
+    if not quiz_cats:
+        return build_termo_deck(termo_cats, total_rounds)
+
+    ratio = max(0.0, min(1.0, termo_ratio))
+    # garante ao menos 1 rodada de cada lado quando ambos os tipos foram escolhidos
+    n_termo = max(1, min(total_rounds - 1, round(total_rounds * ratio)))
+    n_quiz = total_rounds - n_termo
+
+    deck = build_termo_deck(termo_cats, n_termo)[:n_termo] + build_deck(quiz_cats, n_quiz)[:n_quiz]
+    random.shuffle(deck)
+    return deck
 
 
 def random_question(categories: list[str] | None = None) -> Question | None:
